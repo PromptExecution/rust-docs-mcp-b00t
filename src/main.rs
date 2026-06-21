@@ -44,6 +44,14 @@ struct Cli {
     /// Optional features to enable for the crate when generating documentation.
     #[arg(short = 'F', long, value_delimiter = ',', num_args = 0..)] // Allow multiple comma-separated values
     features: Option<Vec<String>>,
+
+    /// Start in HTTP/SSE server mode (default: stdio).
+    #[arg(long)]
+    http: bool,
+
+    /// Port for HTTP/SSE server (default: 3000).
+    #[arg(long, default_value = "3000")]
+    port: u16,
 }
 
 // Helper function to create a stable hash from features
@@ -321,22 +329,31 @@ async fn main() -> Result<(), ServerError> {
     )?;
 
     // --- Use standard stdio transport and ServiceExt ---
-    eprintln!("Rust Docs MCP server starting via stdio...");
+    if cli.http {
+        // HTTP/SSE server mode (b00t agentic rendering)
+        use std::net::SocketAddr;
+        let addr: SocketAddr = format!("0.0.0.0:{}", cli.port).parse().map_err(|e| {
+            ServerError::Config(format!("Invalid address: {e}"))
+        })?;
+        eprintln!("Rust Docs MCP server starting via HTTP/SSE on {addr}...");
+        let ct = rmcp::transport::sse_server::SseServer::serve(addr).await.map_err(|e| {
+            ServerError::Config(format!("Failed to start SSE server: {e}"))
+        })?.with_service(move || service.clone());
+        eprintln!("SSE server listening on http://{addr}/sse");
+        // Block until cancelled
+        tokio::signal::ctrl_c().await.ok();
+        ct.cancel();
+    } else {
+        // Stdio mode (default)
+        eprintln!("Rust Docs MCP server starting via stdio...");
+        let server_handle = service.serve(stdio()).await.map_err(|e| {
+            eprintln!("Failed to start server: {:?}", e);
+            ServerError::McpRuntime(e.to_string())
+        })?;
+        server_handle.waiting().await.map_err(|e| {
+            ServerError::McpRuntime(format!("Server error: {e}"))
+        })?;
+    }
 
-    // Serve the server using the ServiceExt trait and standard stdio transport
-    let server_handle = service.serve(stdio()).await.map_err(|e| {
-        eprintln!("Failed to start server: {:?}", e);
-        ServerError::McpRuntime(e.to_string()) // Use the new McpRuntime variant
-    })?;
-
-    eprintln!("{} Docs MCP server running...", &crate_name);
-
-    // Wait for the server to complete (e.g., stdin closed)
-    server_handle.waiting().await.map_err(|e| {
-        eprintln!("Server encountered an error while running: {:?}", e);
-        ServerError::McpRuntime(e.to_string()) // Use the new McpRuntime variant
-    })?;
-
-    eprintln!("Rust Docs MCP server stopped.");
     Ok(())
 }

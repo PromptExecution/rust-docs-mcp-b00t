@@ -1,0 +1,21 @@
+# Cocogitto configuration — automated semantic versioning
+# b00t-variant of Govcraft/rust-docs-mcp-server
+#
+# Usage:
+#   cog bump --auto          Auto-bump based on conventional commits
+#   cog bump --major          Force major bump
+#   cog changelog             Generate CHANGELOG.md
+
+tag_prefix = ""
+branch_whitelist = ["main", "b00t-variant"]
+ignore_merge_commits = true
+
+[changelog]
+path = "CHANGELOG.md"
+template = "remote"
+remote = "github.com"
+repository = "PromptExecution/rust-docs-mcp-server"
+owner = "PromptExecution"
+authors = [
+  { signature = "b00t", username = "b00t-agent" },
+]
