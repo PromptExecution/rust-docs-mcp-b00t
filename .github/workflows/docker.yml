@@ -17,26 +17,63 @@ permissions:
   packages: write
 
 jobs:
-  build-and-push:
-    name: Build Docker image
+  # Fast local gate on sm3lly — native cargo build, no QEMU, no containers.
+  # wrkflw can run this job locally: wrkflw run --job local-build --runtime emulation
+  local-build:
+    name: Local compile gate (sm3lly)
+    runs-on: [self-hosted, sm3lly]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdocs-mcp-server-amd64
+          path: target/release/rustdocs_mcp_server
+          retention-days: 1
+
+  # Cloud multi-arch Docker build — only fires if local-build passes.
+  # arm64 still uses QEMU but amd64 artifact is reused from local-build.
+  docker-push:
+    name: Docker multi-arch push
     runs-on: ubuntu-latest
+    needs: [local-build]
+    if: github.event_name != 'pull_request'
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - name: Download amd64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: rustdocs-mcp-server-amd64
+          path: prebuilt/
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Set up QEMU (arm64 only)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Log in to GitHub Container Registry
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels)
+      - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -48,11 +85,11 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push Docker image
+      - name: Build and push (amd64 + arm64)
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
