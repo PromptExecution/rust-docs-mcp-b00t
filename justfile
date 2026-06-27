@@ -50,6 +50,22 @@ docker-build:
 docker-run crate="serde@^1.0":
     docker run -i --rm -e OPENAI_API_KEY promptexecution/rust-docs-mcp-server:latest "{{crate}}"
 
+# ── wrkflw — local CI gate ─────────────────────────────────────────────────
+# Run before push to catch compile errors without burning cloud CI minutes.
+# Requires: cargo install wrkflw
+
+# Validate workflow YAML schema (instantaneous)
+ci-validate:
+    wrkflw validate .github/workflows/docker.yml
+
+# Run local-build job locally via emulation (no containers)
+ci-local:
+    wrkflw run --job local-build --runtime emulation .github/workflows/docker.yml
+
+# Watch: auto-rerun ci-local on file changes (dev loop)
+ci-watch:
+    wrkflw watch --job local-build .github/workflows/docker.yml
+
 # ── Cocogitto ──────────────────────────────────────────────────────────────
 
 bump:
