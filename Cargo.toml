@@ -13,7 +13,8 @@ thiserror = "2.0.12"
 walkdir = "2.5.0"
 scraper = "0.23.1"
 ndarray = { version = "0.16.1", features = ["serde"] } # Enable serde feature
-async-openai = "0.28.0"
+async-openai = { version = "0.28.0", default-features = false, features = ["native-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 # async-trait = "0.1.88" # Removed, likely no longer needed
 futures = "0.3"
 bincode = { version = "2.0.1", features = ["serde"] } # Enable serde integration
