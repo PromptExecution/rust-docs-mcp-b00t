@@ -1,8 +1,5 @@
 use crate::{doc_loader::Document, error::ServerError};
-use async_openai::{
-    config::OpenAIConfig, error::ApiError as OpenAIAPIErr, types::CreateEmbeddingRequestArgs,
-    Client as OpenAIClient,
-};
+use async_openai::error::ApiError as OpenAIAPIErr;
 use ndarray::{Array1, ArrayView1};
 use std::sync::OnceLock;
 use std::sync::Arc;
@@ -10,7 +7,9 @@ use tiktoken_rs::cl100k_base;
 use futures::stream::{self, StreamExt};
 
 // Static OnceLock for the OpenAI client
-pub static OPENAI_CLIENT: OnceLock<OpenAIClient<OpenAIConfig>> = OnceLock::new();
+pub static OPENAI_CLIENT: OnceLock<async_openai::Client<async_openai::config::OpenAIConfig>> = OnceLock::new();
+pub static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+pub static EMBEDDING_API_BASE: OnceLock<String> = OnceLock::new();
 
 
 use bincode::{Encode, Decode};
@@ -40,82 +39,91 @@ pub fn cosine_similarity(v1: ArrayView1<f32>, v2: ArrayView1<f32>) -> f32 {
 
 /// Generates embeddings for a list of documents using the OpenAI API.
 pub async fn generate_embeddings(
-    client: &OpenAIClient<OpenAIConfig>,
+    client: &reqwest::Client,
+    api_base: &str,
+    api_key: &str,
     documents: &[Document],
     model: &str,
-) -> Result<(Vec<(String, Array1<f32>)>, usize), ServerError> { // Return tuple: (embeddings, total_tokens)
-    // eprintln!("Generating embeddings for {} documents...", documents.len());
-
-    // Get the tokenizer for the model and wrap in Arc
+) -> Result<(Vec<(String, Array1<f32>)>, usize), ServerError> {
     let bpe = Arc::new(cl100k_base().map_err(|e| ServerError::Tiktoken(e.to_string()))?);
 
-    const CONCURRENCY_LIMIT: usize = 8; // Number of concurrent requests
-    const TOKEN_LIMIT: usize = 8000; // Keep a buffer below the 8192 limit
+    const CONCURRENCY_LIMIT: usize = 8;
+    const TOKEN_LIMIT: usize = 450; // nomic-embed-text batch limit is 512
+
+    let url = format!("{}/embeddings", api_base);
 
     let results = stream::iter(documents.iter().enumerate())
         .map(|(index, doc)| {
-            // Clone client, model, doc, and Arc<BPE> for the async block
             let client = client.clone();
+            let url = url.clone();
+            let api_key = api_key.to_string();
             let model = model.to_string();
             let doc = doc.clone();
-            let bpe = Arc::clone(&bpe); // Clone the Arc pointer
+            let bpe = Arc::clone(&bpe);
 
             async move {
-                // Calculate token count for this document
                 let token_count = bpe.encode_with_special_tokens(&doc.content).len();
-
                 if token_count > TOKEN_LIMIT {
-                    // eprintln!(
-                    //     "    Skipping document {}: Actual tokens ({}) exceed limit ({}). Path: {}",
-                    //     index + 1,
-                    //     token_count,
-                    //     TOKEN_LIMIT,
-                    //     doc.path
-                    // );
-                    // Return Ok(None) to indicate skipping, with 0 tokens processed for this doc
-                    return Ok::<Option<(String, Array1<f32>, usize)>, ServerError>(None); // Include token count type
+                    return Ok::<Option<(String, Array1<f32>, usize)>, ServerError>(None);
                 }
 
-                // Prepare input for this single document
-                let inputs: Vec<String> = vec![doc.content.clone()];
+                let body = serde_json::json!({
+                    "model": model,
+                    "input": [doc.content]
+                });
 
-                let request = CreateEmbeddingRequestArgs::default()
-                    .model(&model) // Use cloned model string
-                    .input(inputs)
-                    .build()?; // Propagates OpenAIError
+                let resp = client.post(&url)
+                    .header("Authorization", format!("Bearer {}", api_key))
+                    .json(&body)
+                    .send()
+                    .await
+                    .map_err(|e| ServerError::OpenAI(async_openai::error::OpenAIError::Reqwest(e)))?;
 
-                // eprintln!(
-                //     "    Sending request for document {} ({} tokens)... Path: {}",
-                //     index + 1,
-                //     token_count, // Use correct variable name
-                //     doc.path
-                // );
-                let response = client.embeddings().create(request).await?; // Propagates OpenAIError
-                // eprintln!("    Received response for document {}.", index + 1);
+                let status = resp.status();
+                let bytes = resp.bytes().await
+                    .map_err(|e| ServerError::OpenAI(async_openai::error::OpenAIError::Reqwest(e)))?;
 
-                if response.data.len() != 1 {
-                    return Err(ServerError::OpenAI(
-                        async_openai::error::OpenAIError::ApiError(OpenAIAPIErr {
-                            message: format!(
-                                "Mismatch in response length for document {}. Expected 1, got {}.",
-                                index + 1, response.data.len()
-                            ),
-                            r#type: Some("sdk_error".to_string()),
-                            param: None,
-                            code: None,
-                        }),
-                    ));
+                if !status.is_success() {
+                    let msg = String::from_utf8_lossy(&bytes).into_owned();
+                    // Skip documents that exceed the batch size limit
+                    if msg.contains("too large to process") || msg.contains("batch size") {
+                        return Ok(None);
+                    }
+                    return Err(ServerError::OpenAI(async_openai::error::OpenAIError::ApiError(
+                        async_openai::error::ApiError {
+                            message: msg, r#type: None, param: None, code: None,
+                        }
+                    )));
                 }
 
-                // Process result
-                let embedding_data = response.data.first().unwrap(); // Safe unwrap due to check above
-                let embedding_array = Array1::from(embedding_data.embedding.clone());
-                // Return Ok(Some(...)) for successful embedding, include token count
-                Ok(Some((doc.path.clone(), embedding_array, token_count))) // Include token count
+                let response: serde_json::Value = serde_json::from_slice(&bytes)
+                    .map_err(|e| ServerError::OpenAI(async_openai::error::OpenAIError::JSONDeserialize(e)))?;
+
+                let data = response["data"].as_array()
+                    .ok_or_else(|| ServerError::OpenAI(async_openai::error::OpenAIError::ApiError(
+                        async_openai::error::ApiError {
+                            message: "missing data array".into(), r#type: None, param: None, code: None,
+                        }
+                    )))?;
+
+                if data.len() != 1 {
+                    return Err(ServerError::OpenAI(async_openai::error::OpenAIError::ApiError(
+                        async_openai::error::ApiError {
+                            message: format!("expected 1 embedding, got {}", data.len()),
+                            r#type: None, param: None, code: None,
+                        }
+                    )));
+                }
+
+                let embedding: Vec<f32> = serde_json::from_value(data[0]["embedding"].clone())
+                    .map_err(|e| ServerError::OpenAI(async_openai::error::OpenAIError::JSONDeserialize(e)))?;
+
+                let embedding_array = Array1::from(embedding);
+                Ok(Some((doc.path.clone(), embedding_array, token_count)))
             }
         })
-        .buffer_unordered(CONCURRENCY_LIMIT) // Run up to CONCURRENCY_LIMIT futures concurrently
-        .collect::<Vec<Result<Option<(String, Array1<f32>, usize)>, ServerError>>>() // Update collected result type
+        .buffer_unordered(CONCURRENCY_LIMIT)
+        .collect::<Vec<Result<Option<(String, Array1<f32>, usize)>, ServerError>>>()
         .await;
 
     // Process collected results, filtering out errors and skipped documents, summing tokens

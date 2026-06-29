@@ -1,14 +1,13 @@
 use crate::{
     doc_loader::Document,
-    embeddings::{OPENAI_CLIENT, cosine_similarity},
+    embeddings::{EMBEDDING_API_BASE, HTTP_CLIENT, OPENAI_CLIENT, cosine_similarity},
     error::ServerError, // Keep ServerError for ::new()
 };
 use async_openai::{
     types::{
         ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestUserMessageArgs,
-        CreateChatCompletionRequestArgs, CreateEmbeddingRequestArgs,
+        CreateChatCompletionRequestArgs,
     },
-    // Client as OpenAIClient, // Removed unused import
 };
 use ndarray::Array1;
 use rmcp::model::AnnotateAble; // Import trait for .no_annotation()
@@ -171,31 +170,53 @@ impl RustDocsServer {
         );
 
         // --- Embedding Generation for Question ---
-        let client = OPENAI_CLIENT
+        let http_client = HTTP_CLIENT
             .get()
-            .ok_or_else(|| McpError::internal_error("OpenAI client not initialized", None))?;
+            .ok_or_else(|| McpError::internal_error("HTTP client not initialized", None))?;
+        let api_base = EMBEDDING_API_BASE
+            .get()
+            .ok_or_else(|| McpError::internal_error("Embedding API base not set", None))?;
+        let api_key = env::var("OPENAI_API_KEY").unwrap_or_default();
 
         let embedding_model: String =
             env::var("EMBEDDING_MODEL").unwrap_or_else(|_| "text-embedding-3-small".to_string());
-        let question_embedding_request = CreateEmbeddingRequestArgs::default()
-            .model(embedding_model)
-            .input(question.to_string())
-            .build()
-            .map_err(|e| {
-                McpError::internal_error(format!("Failed to build embedding request: {}", e), None)
-            })?;
 
-        let question_embedding_response = client
-            .embeddings()
-            .create(question_embedding_request)
+        let url = format!("{}/embeddings", api_base);
+        let body = serde_json::json!({
+            "model": embedding_model,
+            "input": [question]
+        });
+
+        let resp = http_client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .json(&body)
+            .send()
             .await
-            .map_err(|e| McpError::internal_error(format!("OpenAI API error: {}", e), None))?;
+            .map_err(|e| McpError::internal_error(format!("HTTP error: {}", e), None))?;
 
-        let question_embedding = question_embedding_response.data.first().ok_or_else(|| {
+        let status = resp.status();
+        let bytes = resp.bytes().await
+            .map_err(|e| McpError::internal_error(format!("HTTP read error: {}", e), None))?;
+
+        if !status.is_success() {
+            let msg = String::from_utf8_lossy(&bytes);
+            return Err(McpError::internal_error(format!("API error {}: {}", status.as_u16(), msg), None));
+        }
+
+        let response: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|e| McpError::internal_error(format!("JSON parse: {}", e), None))?;
+
+        let question_embedding_data = response["data"].as_array()
+            .and_then(|a| a.first())
+            .ok_or_else(|| {
             McpError::internal_error("Failed to get embedding for question", None)
         })?;
 
-        let question_vector = Array1::from(question_embedding.embedding.clone());
+        let question_embedding: Vec<f32> = serde_json::from_value(
+            question_embedding_data["embedding"].clone()
+        ).map_err(|e| McpError::internal_error(format!("Failed to parse embedding: {}", e), None))?;
+        let question_vector = Array1::from(question_embedding);
 
         // --- Find Best Matching Document ---
         let mut best_match: Option<(&str, f32)> = None;
@@ -225,6 +246,9 @@ impl RustDocsServer {
                         doc.content, question
                     );
 
+                    let chat_client = OPENAI_CLIENT
+                        .get()
+                        .ok_or_else(|| McpError::internal_error("OpenAI client not initialized", None))?;
                     let llm_model: String = env::var("LLM_MODEL")
                         .unwrap_or_else(|_| "gpt-4o-mini-2024-07-18".to_string());
                     let chat_request = CreateChatCompletionRequestArgs::default()
@@ -259,7 +283,7 @@ impl RustDocsServer {
                             )
                         })?;
 
-                    let chat_response = client.chat().create(chat_request).await.map_err(|e| {
+                    let chat_response = chat_client.chat().create(chat_request).await.map_err(|e| {
                         McpError::internal_error(format!("OpenAI chat API error: {}", e), None)
                     })?;
 

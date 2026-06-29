@@ -7,11 +7,11 @@ mod server; // Keep server module as RustDocsServer is defined there
 // Use necessary items from modules and crates
 use crate::{
     doc_loader::Document,
-    embeddings::{generate_embeddings, CachedDocumentEmbedding, OPENAI_CLIENT},
+    embeddings::{generate_embeddings, CachedDocumentEmbedding, EMBEDDING_API_BASE, HTTP_CLIENT, OPENAI_CLIENT},
     error::ServerError,
-    server::RustDocsServer, // Import the updated RustDocsServer
+    server::RustDocsServer,
 };
-use async_openai::{Client as OpenAIClient, config::OpenAIConfig};
+
 use bincode::config;
 use cargo::core::PackageIdSpec;
 use clap::Parser; // Import clap Parser
@@ -190,15 +190,21 @@ async fn main() -> Result<(), ServerError> {
     let mut documents_for_server: Vec<Document> = loaded_documents_from_cache.unwrap_or_default();
 
     // --- Initialize OpenAI Client (needed for question embedding even if cache hit) ---
-    let openai_client = if let Ok(api_base) = env::var("OPENAI_API_BASE") {
-        let config = OpenAIConfig::new().with_api_base(api_base);
-        OpenAIClient::with_config(config)
-    } else {
-        OpenAIClient::new()
-    };
-    OPENAI_CLIENT
-        .set(openai_client.clone()) // Clone the client for the OnceCell
-        .expect("Failed to set OpenAI client");
+    let api_key = env::var("OPENAI_API_KEY")
+        .map_err(|_| ServerError::MissingEnvVar("OPENAI_API_KEY".to_string()))?;
+    let api_base = env::var("OPENAI_API_BASE").unwrap_or_else(|_| "https://api.openai.com/v1".into());
+
+    // reqwest client for embeddings (avoids async-openai connection hangs)
+    let http_client = reqwest::Client::new();
+    HTTP_CLIENT.set(http_client.clone()).expect("Failed to set HTTP client");
+    EMBEDDING_API_BASE.set(api_base.clone()).expect("Failed to set embedding API base");
+
+    // async-openai client for chat completions
+    let openai_config = async_openai::config::OpenAIConfig::new()
+        .with_api_base(&api_base)
+        .with_api_key(&api_key);
+    let openai_client = async_openai::Client::with_config(openai_config);
+    OPENAI_CLIENT.set(openai_client).expect("Failed to set OpenAI client");
 
     let final_embeddings = match loaded_embeddings {
         Some(embeddings) => {
@@ -225,7 +231,7 @@ async fn main() -> Result<(), ServerError> {
             let embedding_model: String = env::var("EMBEDDING_MODEL")
                 .unwrap_or_else(|_| "text-embedding-3-small".to_string());
             let (generated_embeddings, total_tokens) =
-                generate_embeddings(&openai_client, &loaded_documents, &embedding_model).await?;
+                generate_embeddings(&http_client, &api_base, &api_key, &loaded_documents, &embedding_model).await?;
 
             let cost_per_million = 0.02;
             let estimated_cost = (total_tokens as f64 / 1_000_000.0) * cost_per_million;
