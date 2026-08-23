@@ -21,7 +21,7 @@ jobs:
   # wrkflw can run this job locally: wrkflw run --job local-build --runtime emulation
   local-build:
     name: Local compile gate (sm3lly)
-    runs-on: [self-hosted, sm3lly]
+    runs-on: runners-promptexecution-org
     steps:
       - uses: actions/checkout@v4
 
