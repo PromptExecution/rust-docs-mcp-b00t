@@ -1,0 +1,8 @@
+name: ARC routing test (temporary)
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: runners-promptexecution-org
+    steps:
+      - run: echo "ARC scale-set routing works"
