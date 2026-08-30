@@ -48,7 +48,10 @@ pub async fn generate_embeddings(
     let bpe = Arc::new(cl100k_base().map_err(|e| ServerError::Tiktoken(e.to_string()))?);
 
     const CONCURRENCY_LIMIT: usize = 8;
-    const TOKEN_LIMIT: usize = 450; // nomic-embed-text batch limit is 512
+    // nomic-embed-text's batch limit is 512 tokens; real OpenAI embedding models
+    // accept up to 8192. Guessing by model name keeps the default (OpenAI) config
+    // from silently dropping every document over 450 tokens.
+    let token_limit: usize = if model.contains("nomic") { 450 } else { 8000 };
 
     let url = format!("{}/embeddings", api_base);
 
@@ -63,7 +66,7 @@ pub async fn generate_embeddings(
 
             async move {
                 let token_count = bpe.encode_with_special_tokens(&doc.content).len();
-                if token_count > TOKEN_LIMIT {
+                if token_count > token_limit {
                     return Ok::<Option<(String, Array1<f32>, usize)>, ServerError>(None);
                 }
 

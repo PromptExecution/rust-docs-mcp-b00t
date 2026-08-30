@@ -195,7 +195,10 @@ async fn main() -> Result<(), ServerError> {
     let api_base = env::var("OPENAI_API_BASE").unwrap_or_else(|_| "https://api.openai.com/v1".into());
 
     // reqwest client for embeddings (avoids async-openai connection hangs)
-    let http_client = reqwest::Client::new();
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| ServerError::OpenAI(async_openai::error::OpenAIError::Reqwest(e)))?;
     HTTP_CLIENT.set(http_client.clone()).expect("Failed to set HTTP client");
     EMBEDDING_API_BASE.set(api_base.clone()).expect("Failed to set embedding API base");
 
