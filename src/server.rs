@@ -176,7 +176,12 @@ impl RustDocsServer {
         let api_base = EMBEDDING_API_BASE
             .get()
             .ok_or_else(|| McpError::internal_error("Embedding API base not set", None))?;
-        let api_key = env::var("OPENAI_API_KEY").unwrap_or_default();
+        let api_key = env::var("OPENAI_API_KEY").map_err(|_| {
+            McpError::internal_error(
+                "Environment variable not set: OPENAI_API_KEY",
+                None,
+            )
+        })?;
 
         let embedding_model: String =
             env::var("EMBEDDING_MODEL").unwrap_or_else(|_| "text-embedding-3-small".to_string());
