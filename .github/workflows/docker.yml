@@ -17,11 +17,15 @@ permissions:
   packages: write
 
 jobs:
-  # Fast local gate on sm3lly — native cargo build, no QEMU, no containers.
+  # Fast compile gate — native cargo build, no QEMU, no containers.
   # wrkflw can run this job locally: wrkflw run --job local-build --runtime emulation
+  # Runs on a GitHub-hosted runner: no self-hosted runner is registered for
+  # this repo (the org's only active self-hosted runner is scoped to a
+  # different repo), so `runs-on: runners-promptexecution-org` queued
+  # forever and never executed.
   local-build:
-    name: Local compile gate (sm3lly)
-    runs-on: runners-promptexecution-org
+    name: Compile gate
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
