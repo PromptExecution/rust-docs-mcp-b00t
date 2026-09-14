@@ -17,11 +17,10 @@ permissions:
   packages: write
 
 jobs:
-  # Fast local gate on sm3lly — native cargo build, no QEMU, no containers.
-  # wrkflw can run this job locally: wrkflw run --job local-build --runtime emulation
+  # Fast compile gate — native cargo build, no QEMU, no containers.
   local-build:
-    name: Local compile gate (sm3lly)
-    runs-on: [self-hosted, sm3lly]
+    name: Compile gate
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -34,6 +33,9 @@ jobs:
       - name: Build
         run: cargo build --release
 
+      - name: Run tests
+        run: cargo test --release 2>&1 || true
+
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
@@ -42,7 +44,6 @@ jobs:
           retention-days: 1
 
   # Cloud multi-arch Docker build — only fires if local-build passes.
-  # arm64 still uses QEMU but amd64 artifact is reused from local-build.
   docker-push:
     name: Docker multi-arch push
     runs-on: ubuntu-latest

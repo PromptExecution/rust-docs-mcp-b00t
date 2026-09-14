@@ -1,0 +1,12 @@
+# rust-docs.mcp.b00t.promptexecution.com
+# Automatic HTTPS via Let's Encrypt (Caddy handles cert provisioning)
+
+rust-docs.mcp.b00t.promptexecution.com {
+	# Management API + SSE proxy
+	reverse_proxy localhost:3000
+}
+
+# Fallback for direct IP access / local dev
+:443 {
+	reverse_proxy localhost:3000
+}

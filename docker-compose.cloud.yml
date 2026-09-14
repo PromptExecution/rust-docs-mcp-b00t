@@ -1,0 +1,58 @@
+# rust-docs MCP cloud service — docker-compose deployment
+# Canonical endpoint: https://rust-docs.mcp.b00t.promptexecution.com
+#
+# Usage:
+#   docker compose up -d
+#   curl https://rust-docs.mcp.b00t.promptexecution.com/health
+#   curl -X POST https://rust-docs.mcp.b00t.promptexecution.com/api/crates \
+#     -H 'Content-Type: application/json' -d '{"crate_spec": "serde"}'
+
+services:
+  rust-docs-mcp:
+    image: ghcr.io/promptexecution/rust-docs-mcp-b00t:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"       # Management API
+      - "3001-3100:3001-3100"  # Ephemeral crate SSE ports
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_API_BASE=${OPENAI_API_BASE:-}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini-2024-07-18}
+      - HOST=0.0.0.0
+      - PORT=3000
+      - CRATE_PORT_START=3001
+      - PUBLIC_HOST=rust-docs.mcp.b00t.promptexecution.com
+      - CRATE_PRELOAD=${CRATE_PRELOAD:-serde}
+      - RUST_LOG=info
+    volumes:
+      - rust-docs-cache:/root/.local/share/rustdocs-mcp-server
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # Caddy reverse proxy — automatic HTTPS via Let's Encrypt
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      rust-docs-mcp:
+        condition: service_healthy
+
+volumes:
+  rust-docs-cache:
+  caddy-data:
+  caddy-config:
