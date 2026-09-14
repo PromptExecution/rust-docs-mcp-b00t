@@ -83,15 +83,22 @@ async fn main() -> Result<(), ServerError> {
     let cli = Cli::parse();
 
     // --- Initialize OpenAI Client (needed for both cloud and single-crate modes) ---
-    let openai_client = if let Ok(api_base) = env::var("OPENAI_API_BASE") {
-        let config = OpenAIConfig::new().with_api_base(api_base);
-        OpenAIClient::with_config(config)
-    } else {
-        OpenAIClient::new()
-    };
-    OPENAI_CLIENT
-        .set(openai_client.clone())
-        .expect("Failed to set OpenAI client");
+    let api_key = env::var("OPENAI_API_KEY")
+        .map_err(|_| ServerError::MissingEnvVar("OPENAI_API_KEY".to_string()))?;
+    let api_base = env::var("OPENAI_API_BASE").unwrap_or_else(|_| "https://api.openai.com/v1".into());
+
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| ServerError::OpenAI(async_openai::error::OpenAIError::Reqwest(e)))?;
+    HTTP_CLIENT.set(http_client).expect("Failed to set HTTP client");
+    EMBEDDING_API_BASE.set(api_base.clone()).expect("Failed to set embedding API base");
+
+    let openai_config = async_openai::config::OpenAIConfig::new()
+        .with_api_base(&api_base)
+        .with_api_key(&api_key);
+    let openai_client = async_openai::Client::with_config(openai_config);
+    OPENAI_CLIENT.set(openai_client).expect("Failed to set OpenAI client");
 
     // --- Cloud mode: management API + on-demand crate loading ---
     if cli.cloud {
@@ -216,26 +223,6 @@ async fn main() -> Result<(), ServerError> {
     let mut generated_tokens: Option<usize> = None;
     let mut generation_cost: Option<f64> = None;
     let mut documents_for_server: Vec<Document> = loaded_documents_from_cache.unwrap_or_default();
-
-    // --- Initialize OpenAI Client (needed for question embedding even if cache hit) ---
-    let api_key = env::var("OPENAI_API_KEY")
-        .map_err(|_| ServerError::MissingEnvVar("OPENAI_API_KEY".to_string()))?;
-    let api_base = env::var("OPENAI_API_BASE").unwrap_or_else(|_| "https://api.openai.com/v1".into());
-
-    // reqwest client for embeddings (avoids async-openai connection hangs)
-    let http_client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| ServerError::OpenAI(async_openai::error::OpenAIError::Reqwest(e)))?;
-    HTTP_CLIENT.set(http_client.clone()).expect("Failed to set HTTP client");
-    EMBEDDING_API_BASE.set(api_base.clone()).expect("Failed to set embedding API base");
-
-    // async-openai client for chat completions
-    let openai_config = async_openai::config::OpenAIConfig::new()
-        .with_api_base(&api_base)
-        .with_api_key(&api_key);
-    let openai_client = async_openai::Client::with_config(openai_config);
-    OPENAI_CLIENT.set(openai_client).expect("Failed to set OpenAI client");
 
     let final_embeddings = match loaded_embeddings {
         Some(embeddings) => {
