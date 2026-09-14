@@ -91,7 +91,7 @@ async fn main() -> Result<(), ServerError> {
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| ServerError::OpenAI(async_openai::error::OpenAIError::Reqwest(e)))?;
-    HTTP_CLIENT.set(http_client).expect("Failed to set HTTP client");
+    HTTP_CLIENT.set(http_client.clone()).expect("Failed to set HTTP client");
     EMBEDDING_API_BASE.set(api_base.clone()).expect("Failed to set embedding API base");
 
     let openai_config = async_openai::config::OpenAIConfig::new()

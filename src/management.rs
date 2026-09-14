@@ -3,7 +3,7 @@
 // Each crate gets its own MCP SSE server on an ephemeral port.
 
 use crate::doc_loader::{self, Document};
-use crate::embeddings::{generate_embeddings, CachedDocumentEmbedding, OPENAI_CLIENT};
+use crate::embeddings::{generate_embeddings, CachedDocumentEmbedding, EMBEDDING_API_BASE, HTTP_CLIENT, OPENAI_CLIENT};
 use crate::error::ServerError;
 use crate::server::RustDocsServer;
 use axum::{
@@ -250,13 +250,16 @@ async fn load_and_serve_crate(
             let docs = doc_loader::load_documents(&crate_name, &version_req, features.as_ref())?;
             eprintln!("[{}] Loaded {} documents", crate_spec, docs.len());
 
-            let client = OPENAI_CLIENT
+            let _client = OPENAI_CLIENT
                 .get()
                 .ok_or_else(|| ServerError::Config("OpenAI client not initialized".to_string()))?;
 
             let embedding_model =
                 env::var("EMBEDDING_MODEL").unwrap_or_else(|_| "text-embedding-3-small".to_string());
-            let (embs, _tokens) = generate_embeddings(client, &docs, &embedding_model).await?;
+            let http_client = HTTP_CLIENT.get().ok_or_else(|| ServerError::Config("HTTP client not initialized".to_string()))?;
+            let api_base = EMBEDDING_API_BASE.get().ok_or_else(|| ServerError::Config("Embedding API base not initialized".to_string()))?;
+            let api_key = env::var("OPENAI_API_KEY").unwrap_or_default();
+            let (embs, _tokens) = generate_embeddings(http_client, api_base, &api_key, &docs, &embedding_model).await?;
             eprintln!("[{}] Generated {} embeddings", crate_spec, embs.len());
 
             save_cache(&cache_path, &docs, &embs);
