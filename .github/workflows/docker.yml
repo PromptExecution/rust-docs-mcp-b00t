@@ -18,6 +18,11 @@ permissions:
 
 jobs:
   # Fast compile gate — native cargo build, no QEMU, no containers.
+  # wrkflw can run this job locally: wrkflw run --job local-build --runtime emulation
+  # Runs on a GitHub-hosted runner: no self-hosted runner is registered for
+  # this repo (the org's only active self-hosted runner is scoped to a
+  # different repo), so `runs-on: runners-promptexecution-org` queued
+  # forever and never executed.
   local-build:
     name: Compile gate
     runs-on: ubuntu-latest
