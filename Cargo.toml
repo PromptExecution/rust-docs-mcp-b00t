@@ -14,7 +14,7 @@ walkdir = "2.5.0"
 scraper = "0.23.1"
 ndarray = { version = "0.16.1", features = ["serde"] } # Enable serde feature
 async-openai = { version = "0.28.0", default-features = false, features = ["rustls"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 # async-trait = "0.1.88" # Removed, likely no longer needed
 futures = "0.3"
 bincode = { version = "2.0.1", features = ["serde"] } # Enable serde integration
@@ -26,7 +26,6 @@ anyhow = "1.0.97"
 schemars = "0.8.22"
 clap = { version = "4.5.34", features = ["cargo", "derive", "env"] }
 axum = "0.8"
-reqwest = { version = "0.12", features = ["stream"] }
 uuid = { version = "1", features = ["v4"] }
 
 
