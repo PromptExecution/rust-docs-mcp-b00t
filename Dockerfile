@@ -32,11 +32,12 @@ RUN mkdir src && echo 'fn main(){}' > src/main.rs \
 COPY src ./src
 RUN touch src/main.rs && cargo build --release
 
-FROM debian:bookworm-slim AS runtime
+FROM rust:1.87-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3 \
+    pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/target/release/rustdocs_mcp_server /usr/local/bin/rustdocs_mcp_server
