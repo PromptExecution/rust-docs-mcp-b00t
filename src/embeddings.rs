@@ -58,7 +58,15 @@ pub async fn generate_embeddings(
 
     let url = format!("{}/embeddings", api_base);
 
-    let results = stream::iter(documents.iter().enumerate())
+    // Collect indexed documents to avoid lifetime generalization issues
+    // with async closures in stream::iter().map()
+    let indexed_docs: Vec<(usize, Document)> = documents
+        .iter()
+        .enumerate()
+        .map(|(i, d)| (i, d.clone()))
+        .collect();
+
+    let results = stream::iter(indexed_docs.into_iter())
         .map(|(index, doc)| {
             let client = client.clone();
             let url = url.clone();

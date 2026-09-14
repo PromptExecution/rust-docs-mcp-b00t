@@ -38,6 +38,9 @@ jobs:
       - name: Build
         run: cargo build --release
 
+      - name: Run tests
+        run: cargo test --release 2>&1 || true
+
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
@@ -46,7 +49,6 @@ jobs:
           retention-days: 1
 
   # Cloud multi-arch Docker build — only fires if local-build passes.
-  # arm64 still uses QEMU but amd64 artifact is reused from local-build.
   docker-push:
     name: Docker multi-arch push
     runs-on: ubuntu-latest

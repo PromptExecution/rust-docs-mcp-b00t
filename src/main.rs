@@ -2,7 +2,8 @@
 mod doc_loader;
 mod embeddings;
 mod error;
-mod server; // Keep server module as RustDocsServer is defined there
+mod management;
+mod server;
 
 // Use necessary items from modules and crates
 use crate::{
@@ -38,16 +39,21 @@ use xdg::BaseDirectories;
 #[command(author, version, about, long_about = None)]
 struct Cli {
     /// The package ID specification (e.g., "serde@^1.0", "tokio").
-    #[arg()] // Positional argument
-    package_spec: String,
+    /// Optional in cloud mode (crates loaded via management API).
+    #[arg()]
+    package_spec: Option<String>,
 
     /// Optional features to enable for the crate when generating documentation.
-    #[arg(short = 'F', long, value_delimiter = ',', num_args = 0..)] // Allow multiple comma-separated values
+    #[arg(short = 'F', long, value_delimiter = ',', num_args = 0..)]
     features: Option<Vec<String>>,
 
     /// Start in HTTP/SSE server mode (default: stdio).
     #[arg(long)]
     http: bool,
+
+    /// Start in cloud mode: management API + on-demand crate loading.
+    #[arg(long)]
+    cloud: bool,
 
     /// Port for HTTP/SSE server (default: 3000).
     #[arg(long, default_value = "3000")]
@@ -75,7 +81,29 @@ async fn main() -> Result<(), ServerError> {
 
     // --- Parse CLI Arguments ---
     let cli = Cli::parse();
-    let specid_str = cli.package_spec.trim().to_string(); // Trim whitespace
+
+    // --- Initialize OpenAI Client (needed for both cloud and single-crate modes) ---
+    let openai_client = if let Ok(api_base) = env::var("OPENAI_API_BASE") {
+        let config = OpenAIConfig::new().with_api_base(api_base);
+        OpenAIClient::with_config(config)
+    } else {
+        OpenAIClient::new()
+    };
+    OPENAI_CLIENT
+        .set(openai_client.clone())
+        .expect("Failed to set OpenAI client");
+
+    // --- Cloud mode: management API + on-demand crate loading ---
+    if cli.cloud {
+        eprintln!("Starting in cloud mode...");
+        return management::run_cloud_server(cli.port).await;
+    }
+
+    // --- Single-crate mode (stdio or HTTP/SSE) ---
+    let specid_str = cli.package_spec
+        .ok_or_else(|| ServerError::Config("package_spec required in non-cloud mode".to_string()))?
+        .trim()
+        .to_string();
     let features = cli.features.map(|f| {
         f.into_iter().map(|s| s.trim().to_string()).collect() // Trim each feature
     });
