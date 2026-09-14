@@ -29,7 +29,7 @@ pub enum DocLoaderError {
 }
 
 // Simple struct to hold document content, maybe add path later if needed
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Document {
     pub path: String,
     pub content: String,

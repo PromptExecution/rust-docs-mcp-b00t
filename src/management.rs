@@ -214,6 +214,33 @@ struct LoadResult {
     from_cache: bool,
 }
 
+
+fn try_load_precache(
+    crate_name: &str,
+    version_req: &str,
+    features: &Option<Vec<String>>,
+) -> Option<Vec<Document>> {
+    let features_hash = hash_features(features);
+    let sanitized_version = version_req
+        .replace(|c: char| !c.is_alphanumeric() && c != '.' && c != '-', "_");
+    let precache_path = PathBuf::from("/precache")
+        .join(crate_name)
+        .join(&sanitized_version)
+        .join(&features_hash)
+        .join("docs.json");
+
+    if !precache_path.exists() {
+        return None;
+    }
+    let data = std::fs::read_to_string(&precache_path).ok()?;
+    let docs: Vec<Document> = serde_json::from_str(&data).ok()?;
+    if docs.is_empty() {
+        return None;
+    }
+    eprintln!("[{}] Loaded {} pre-cached docs from {}", crate_name, docs.len(), precache_path.display());
+    Some(docs)
+}
+
 // --- Load a crate: generate docs + embeddings, start SSE server ---
 
 async fn load_and_serve_crate(
@@ -246,8 +273,13 @@ async fn load_and_serve_crate(
             );
             (docs, embs, true)
         } else {
-            eprintln!("[{}] Cache miss — generating docs and embeddings", crate_spec);
-            let docs = doc_loader::load_documents(&crate_name, &version_req, features.as_ref())?;
+            eprintln!("[{}] Cache miss — checking pre-cache", crate_spec);
+            let docs = try_load_precache(&crate_name, &version_req, features)
+                .or_else(|| {
+                    eprintln!("[{}] Pre-cache miss — generating docs via cargo doc", crate_spec);
+                    doc_loader::load_documents(&crate_name, &version_req, features.as_ref()).ok()
+                })
+                .ok_or_else(|| ServerError::Config(format!("Failed to load docs for '{}' (no pre-cache, cargo doc failed — is rustc installed?)", crate_spec)))?;
             eprintln!("[{}] Loaded {} documents", crate_spec, docs.len());
 
             let _client = OPENAI_CLIENT

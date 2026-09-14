@@ -55,6 +55,11 @@ struct Cli {
     #[arg(long)]
     cloud: bool,
 
+    /// Pre-generate docs for crates and save as JSON (no API key needed).
+    /// Usage: --precache serde tokio reqwest
+    #[arg(long, num_args = 1..)]
+    precache: Option<Vec<String>>,
+
     /// Port for HTTP/SSE server (default: 3000).
     #[arg(long, default_value = "3000")]
     port: u16,
@@ -72,6 +77,21 @@ fn hash_features(features: &Option<Vec<String>>) -> String {
             format!("{:x}", hasher.finish()) // Return hex representation of hash
         })
         .unwrap_or_else(|| "no_features".to_string()) // Use a specific string if no features
+}
+
+fn precache_crate(spec: &str, base_dir: &str) -> Result<usize, Box<dyn std::error::Error>> {
+    use cargo::core::PackageIdSpec;
+    let parsed = PackageIdSpec::parse(spec)?;
+    let crate_name = parsed.name().to_string();
+    let version_req = parsed.version().map(|v| v.to_string()).unwrap_or_else(|| "*".to_string());
+    let docs = doc_loader::load_documents(&crate_name, &version_req, None)?;
+    let count = docs.len();
+    let sanitized_version = version_req.replace(|c: char| !c.is_alphanumeric() && c != '.' && c != '-', "_");
+    let out_dir = std::path::PathBuf::from(base_dir).join(&crate_name).join(&sanitized_version).join("no_features");
+    std::fs::create_dir_all(&out_dir)?;
+    let json = serde_json::to_vec_pretty(&docs)?;
+    std::fs::write(out_dir.join("docs.json"), json)?;
+    Ok(count)
 }
 
 #[tokio::main]
@@ -99,6 +119,19 @@ async fn main() -> Result<(), ServerError> {
         .with_api_key(&api_key);
     let openai_client = async_openai::Client::with_config(openai_config);
     OPENAI_CLIENT.set(openai_client).expect("Failed to set OpenAI client");
+
+    // --- Precache mode: pre-generate docs for crates (no API key needed) ---
+    if let Some(crate_specs) = cli.precache {
+        let base_dir = env::var("PRECACHE_DIR").unwrap_or_else(|_| "/precache".to_string());
+        for spec in &crate_specs {
+            eprintln!("📦 Generating docs for {}...", spec);
+            match precache_crate(spec, &base_dir) {
+                Ok(count) => eprintln!("  ✅ {} — {} docs saved", spec, count),
+                Err(e) => eprintln!("  ❌ {} — {}", spec, e),
+            }
+        }
+        return Ok(());
+    }
 
     // --- Cloud mode: management API + on-demand crate loading ---
     if cli.cloud {

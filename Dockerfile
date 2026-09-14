@@ -1,11 +1,10 @@
-# Multi-stage build: compile → minimal runtime image
+# Multi-stage build: compile + precache docs → minimal runtime image
 #
 # Cloud mode (default):  docker run -p 3000:3000 -e OPENAI_API_KEY=... ghcr.io/promptexecution/rust-docs-mcp-b00t:latest
 # Single crate (stdio):  docker run -i ghcr.io/promptexecution/rust-docs-mcp-b00t:latest serde
-# Single crate (HTTP):   docker run -p 3000:3000 ghcr.io/promptexecution/rust-docs-mcp-b00t:latest serde --http
 #
 # Cloud mode env vars:
-#   OPENAI_API_KEY      Required for generating embeddings (new crates)
+#   OPENAI_API_KEY      Required for generating embeddings (new crates, or use pre-cached)
 #   OPENAI_API_BASE     Optional: custom OpenAI-compatible API base URL
 #   EMBEDDING_MODEL     Optional: override embedding model (default: text-embedding-3-small)
 #   LLM_MODEL           Optional: override LLM model (default: gpt-4o-mini-2024-07-18)
@@ -32,15 +31,32 @@ RUN mkdir src && echo 'fn main(){}' > src/main.rs \
 COPY src ./src
 RUN touch src/main.rs && cargo build --release
 
-FROM rust:1.87-slim AS runtime
+# Pre-generate docs for popular crates (no API key needed — just cargo doc)
+# These get baked into the image so the runtime doesn't need rustc.
+# Embeddings are generated at runtime from these cached docs using the API key.
+RUN cargo build --release --bin precache 2>/dev/null || true
+RUN mkdir -p /precache && \
+    PRECACHE_DIR=/precache /build/target/release/precache \
+        serde@^1.0 \
+        tokio@^1 \
+        reqwest@^0.12 \
+        serde_json@^1 \
+        anyhow@^1 \
+        clap@^4 \
+        tracing@^0.1 \
+    ; echo "Pre-cache complete"
+
+FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3 \
-    pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/target/release/rustdocs_mcp_server /usr/local/bin/rustdocs_mcp_server
+
+# Copy pre-cached docs (no rustc needed to load these)
+COPY --from=builder /precache /precache
 
 EXPOSE 3000
 
