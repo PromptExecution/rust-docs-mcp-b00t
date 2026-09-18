@@ -223,16 +223,33 @@ fn try_load_precache(
     let features_hash = hash_features(features);
     let sanitized_version = version_req
         .replace(|c: char| !c.is_alphanumeric() && c != '.' && c != '-', "_");
+    // Try exact version match first, then any version
     let precache_path = PathBuf::from("/precache")
         .join(crate_name)
         .join(&sanitized_version)
         .join(&features_hash)
         .join("docs.json");
 
-    if !precache_path.exists() {
-        return None;
-    }
-    let data = std::fs::read_to_string(&precache_path).ok()?;
+    let actual_path = if precache_path.exists() {
+        precache_path
+    } else {
+        // Scan /precache/{crate}/ for any version directory
+        let crate_dir = PathBuf::from("/precache").join(crate_name);
+        if !crate_dir.is_dir() { return None; }
+        let mut found = None;
+        if let Ok(entries) = std::fs::read_dir(&crate_dir) {
+            for entry in entries.flatten() {
+                let candidate = entry.path().join(&features_hash).join("docs.json");
+                if candidate.exists() {
+                    found = Some(candidate);
+                    break;
+                }
+            }
+        }
+        found?
+    };
+
+    let data = std::fs::read_to_string(&actual_path).ok()?;
     let docs: Vec<Document> = serde_json::from_str(&data).ok()?;
     if docs.is_empty() {
         return None;
