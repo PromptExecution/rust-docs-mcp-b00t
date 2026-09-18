@@ -34,7 +34,7 @@ RUN touch src/main.rs && cargo build --release
 # Pre-generate docs for popular crates (no API key needed — just cargo doc)
 # These get baked into the image so the runtime doesn't need rustc.
 # Embeddings are generated at runtime from these cached docs using the API key.
-RUN mkdir -p /precache && \
+RUN echo "cache-bust-$(date +%s)" > /dev/null && mkdir -p /precache && \
     PRECACHE_DIR=/precache /build/target/release/rustdocs_mcp_server --precache \
         serde@^1.0 \
         tokio@^1 \
