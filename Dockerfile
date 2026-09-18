@@ -36,13 +36,13 @@ RUN touch src/main.rs && cargo build --release
 # Embeddings are generated at runtime from these cached docs using the API key.
 RUN echo "cache-bust-$(date +%s)" > /dev/null && mkdir -p /precache && \
     PRECACHE_DIR=/precache /build/target/release/rustdocs_mcp_server --precache \
-        serde@^1.0 \
-        tokio@^1 \
-        reqwest@^0.12 \
-        serde_json@^1 \
-        anyhow@^1 \
-        clap@^4 \
-        tracing@^0.1 \
+        serde \
+        tokio \
+        reqwest \
+        serde_json \
+        anyhow \
+        clap \
+        tracing \
     ; echo "Pre-cache complete"
 
 FROM debian:bookworm-slim AS runtime
