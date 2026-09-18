@@ -254,7 +254,7 @@ fn try_load_precache(
     if docs.is_empty() {
         return None;
     }
-    eprintln!("[{}] Loaded {} pre-cached docs from {}", crate_name, docs.len(), precache_path.display());
+    eprintln!("[{}] Loaded {} pre-cached docs from {}", crate_name, docs.len(), actual_path.display());
     Some(docs)
 }
 
