@@ -102,6 +102,19 @@ async fn main() -> Result<(), ServerError> {
     // --- Parse CLI Arguments ---
     let cli = Cli::parse();
 
+    // --- Precache mode: pre-generate docs for crates (no API key needed) ---
+    if let Some(crate_specs) = cli.precache {
+        let base_dir = env::var("PRECACHE_DIR").unwrap_or_else(|_| "/precache".to_string());
+        for spec in &crate_specs {
+            eprintln!("📦 Generating docs for {}...", spec);
+            match precache_crate(spec, &base_dir) {
+                Ok(count) => eprintln!("  ✅ {} — {} docs saved", spec, count),
+                Err(e) => eprintln!("  ❌ {} — {}", spec, e),
+            }
+        }
+        return Ok(());
+    }
+
     // --- Initialize OpenAI Client (needed for both cloud and single-crate modes) ---
     let api_key = env::var("OPENAI_API_KEY")
         .map_err(|_| ServerError::MissingEnvVar("OPENAI_API_KEY".to_string()))?;
@@ -119,19 +132,6 @@ async fn main() -> Result<(), ServerError> {
         .with_api_key(&api_key);
     let openai_client = async_openai::Client::with_config(openai_config);
     OPENAI_CLIENT.set(openai_client).expect("Failed to set OpenAI client");
-
-    // --- Precache mode: pre-generate docs for crates (no API key needed) ---
-    if let Some(crate_specs) = cli.precache {
-        let base_dir = env::var("PRECACHE_DIR").unwrap_or_else(|_| "/precache".to_string());
-        for spec in &crate_specs {
-            eprintln!("📦 Generating docs for {}...", spec);
-            match precache_crate(spec, &base_dir) {
-                Ok(count) => eprintln!("  ✅ {} — {} docs saved", spec, count),
-                Err(e) => eprintln!("  ❌ {} — {}", spec, e),
-            }
-        }
-        return Ok(());
-    }
 
     // --- Cloud mode: management API + on-demand crate loading ---
     if cli.cloud {
