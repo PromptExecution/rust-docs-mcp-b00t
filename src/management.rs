@@ -575,8 +575,12 @@ async fn proxy_message(
         }
     };
 
-    let session_id = params.get("session_id").cloned().unwrap_or_default();
-    let target_url = format!("http://127.0.0.1:{}/message?session_id={}", instance.port, session_id);
+    // rmcp uses camelCase sessionId in the URL
+    let session_id = params.get("sessionId")
+        .or_else(|| params.get("session_id"))
+        .cloned()
+        .unwrap_or_default();
+    let target_url = format!("http://127.0.0.1:{}/message?sessionId={}", instance.port, session_id);
     drop(instances);
 
     let client = reqwest::Client::new();
