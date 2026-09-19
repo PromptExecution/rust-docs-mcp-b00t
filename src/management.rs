@@ -512,10 +512,11 @@ async fn proxy_sse(
             // Rewrite session URLs in the SSE stream so the client POSTs to our proxy
             let prefix = crate_spec_clone.clone();
             let body = resp.bytes_stream();
+            use futures::StreamExt;
             let stream = body.map(move |chunk| {
                 match chunk {
-                    Ok(bytes) => {
-                        let text = String::from_utf8_lossy(&bytes).to_string();
+                    Ok(b) => {
+                        let text = String::from_utf8_lossy(&b).to_string();
                         // Rewrite /message?sessionId= to /mcp/{crate}/message?sessionId=
                         let rewritten = text.replace(
                             "/message?sessionId=",
@@ -524,7 +525,7 @@ async fn proxy_sse(
                             "/message?session_id=",
                             &format!("/mcp/{}/message?session_id=", prefix),
                         );
-                        Ok::<bytes::Bytes, std::io::Error>(bytes::Bytes::from(rewritten))
+                        Ok::<_, std::io::Error>(axum::body::Bytes::from(rewritten))
                     }
                     Err(e) => Err(std::io::Error::new(std::io::ErrorKind::Other, e)),
                 }
