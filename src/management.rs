@@ -497,9 +497,10 @@ async fn proxy_sse(
     };
 
     let target_url = format!("http://127.0.0.1:{}/sse", instance.port);
+    let crate_spec_clone = crate_spec.clone();
     drop(instances);
 
-    // Proxy the SSE request to the per-crate server
+    // Proxy the SSE request to the per-crate server, rewriting session URLs
     let client = reqwest::Client::new();
     match client.get(&target_url).send().await {
         Ok(resp) => {
@@ -508,8 +509,26 @@ async fn proxy_sse(
                 .map(|v| v.to_str().unwrap_or("text/event-stream").to_string())
                 .unwrap_or_else(|| "text/event-stream".to_string());
 
+            // Rewrite session URLs in the SSE stream so the client POSTs to our proxy
+            let prefix = crate_spec_clone.clone();
             let body = resp.bytes_stream();
-            let stream = body.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+            let stream = body.map(move |chunk| {
+                match chunk {
+                    Ok(bytes) => {
+                        let text = String::from_utf8_lossy(&bytes).to_string();
+                        // Rewrite /message?sessionId= to /mcp/{crate}/message?sessionId=
+                        let rewritten = text.replace(
+                            "/message?sessionId=",
+                            &format!("/mcp/{}/message?sessionId=", prefix),
+                        ).replace(
+                            "/message?session_id=",
+                            &format!("/mcp/{}/message?session_id=", prefix),
+                        );
+                        Ok::<bytes::Bytes, std::io::Error>(bytes::Bytes::from(rewritten))
+                    }
+                    Err(e) => Err(std::io::Error::new(std::io::ErrorKind::Other, e)),
+                }
+            });
 
             Response::builder()
                 .status(status)
